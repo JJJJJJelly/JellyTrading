@@ -20,8 +20,15 @@
   },
   "tradingParams": [
     {
-      "pairA": "PEOPLE",
-      "pairB": "YGG",
+      "pairA": "PEOPLE-USDT-SWAP",
+      "pairB": "YGG-USDT-SWAP",
+      "grid_size": 0.01,
+      "order_usdt": 30,
+      "leverage_multiple": 2
+    },
+    {
+      "pairA": "APE-USDT-SWAP",
+      "pairB": "BICO-USDT-SWAP",
       "grid_size": 0.01,
       "order_usdt": 30,
       "leverage_multiple": 2
