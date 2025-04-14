@@ -11,6 +11,17 @@ import okx.Account as AccountAPI
 import pandas as pd
 from datetime import datetime
 import requests
+from typing import List
+
+class OffsetAttribute:
+    def __init__(self, offset_ratio, max_ratio):
+        self.offset_ratio = offset_ratio
+        self.max_ratio = max_ratio
+
+    def description(self):
+        return f"{self.offset_ratio} {self.max_ratio}"
+
+
 
 # 读取配置文件
 with open('config.json', 'r') as f:
@@ -44,7 +55,7 @@ console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
 instrument_info_dict = {}
-offset_ratios = []
+offset_ratios: List[OffsetAttribute] = []
 
 
 def fetch_and_store_all_instruments(inst_type='SWAP'):
@@ -235,38 +246,51 @@ def main():
     place_order('BERA-USDT-SWAP', current_price, 1, 'buy', 10)
     time.sleep(5)
     close_position('BERA-USDT-SWAP')
-    # while count < len(trading_params_config):
-    #     offset_ratios.append(0)
-    #     count += 1
-    #
-    # while True:
-    #     for i in range(0, len(trading_params_config)):
-    #         pair = trading_params_config[i]
-    #         offset_ratio = get_offset_ratio(pair)
-    #
-    #         if offset_ratios[i] == 0:
-    #             offset_ratios[i] = offset_ratio
-    #         else:
-    #             if sign(offset_ratios[i]) * sign(offset_ratio) < 0:
-    #                 # 平仓
-    #                 close_position()
-    #                 close_position()
-    #             else:
-    #                 offset_ratios[i] = offset_ratio
-    #         cur_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    #         logger.info(f"{cur_time},【{pair.get('pairA')}】-【{pair.get('pairB')}】offset_ratios:{offset_ratios}")
-    #
-    #     time.sleep(monitor_interval)
+    while count < len(trading_params_config):
+        offset_ratios.append(OffsetAttribute(0,0))
+        count += 1
 
     while True:
-        # for i in range(0, len(inst_ids), batch_size):
-        #     batch = inst_ids[i:i + batch_size]
-        #     with ThreadPoolExecutor(max_workers=batch_size) as executor:
-        #         futures = [executor.submit(process_pair, instId, trading_pairs_config[instId]) for instId in batch]
-        #         for future in as_completed(futures):
-        #             future.result()  # Raise any exceptions caught during execution
+        for i in range(0, len(trading_params_config)):
+            pair = trading_params_config[i]
+            offset_ratio = get_offset_ratio(pair)
+            offset_attribute = offset_ratios[i]
+            grid_size =  float(pair.get('grid_size'))
+            if offset_attribute.offset_ratio == 0:
+                offset_attribute.offset_ratio = offset_ratio
+            else:
+                if sign(offset_attribute.offset_ratio) * sign(offset_ratio) < 0:
+                    # 平仓
+                    close_position(pair.get('pairA'))
+                    close_position(pair.get('pairB'))
+                else:
+                    abs_old_max_ratio = abs(offset_attribute.max_ratio)
+                    abs_cur_ratio = abs(offset_ratio)
+                    if abs_old_max_ratio < abs_cur_ratio:
+                        if abs_old_max_ratio % grid_size > abs_cur_ratio % grid_size:
+                            if offset_ratio > 0:
+                                place_order(pair.get('pairA'))
+                                place_order(pair.get('pairB'))
+
+                        offset_attribute.max_ratio = abs(offset_ratio)
+
+                    offset_attribute.offset_ratio = offset_ratio
+
+
+            cur_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            logger.info(f"{cur_time},【{pair.get('pairA')}】-【{pair.get('pairB')}】offset_ratios:{offset_ratios}")
 
         time.sleep(monitor_interval)
+
+    # while True:
+    #     # for i in range(0, len(inst_ids), batch_size):
+    #     #     batch = inst_ids[i:i + batch_size]
+    #     #     with ThreadPoolExecutor(max_workers=batch_size) as executor:
+    #     #         futures = [executor.submit(process_pair, instId, trading_pairs_config[instId]) for instId in batch]
+    #     #         for future in as_completed(futures):
+    #     #             future.result()  # Raise any exceptions caught during execution
+    #
+    #     time.sleep(monitor_interval)
 
 
 if __name__ == '__main__':
