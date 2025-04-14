@@ -136,11 +136,12 @@ def set_leverage(instId, leverage, mgnMode='isolated', posSide=None):
 
 
 # 开仓接口
-def place_order(instId, price, amount_usdt, side, leverage_value):
+def place_order(instId, amount_usdt, side, leverage_value):
     if instId not in instrument_info_dict:
         logger.error(f"Instrument {instId} not found in instrument info dictionary")
         return
     tick_size = float(instrument_info_dict[instId]['tickSz'])
+    price = float(get_current_price(instId))
     adjusted_price = round_price_to_tick(price, tick_size)
 
     new_amount_usdt = amount_usdt * leverage_value * leverage_value
@@ -168,6 +169,7 @@ def place_order(instId, price, amount_usdt, side, leverage_value):
                 px=str(adjusted_price)
             )
             logger.info(f"Order placed: {order_result}")
+            send_feishu_notification(f"开单币种：{instId},开单方向：{side},数量：{amount_usdt}usdt,杠杆：{leverage_value}")
         else:
             logger.info(f"{instId}计算出的合约张数太小，无法下单。")
     else:
@@ -238,14 +240,8 @@ def sign(x):
 
 
 def main():
-    count = 0
     fetch_and_store_all_instruments()
-
-    # set_leverage('BERA-USDT-SWAP',20,posSide='long')
-    current_price = float(get_current_price('BERA-USDT-SWAP'))
-    place_order('BERA-USDT-SWAP', current_price, 1, 'buy', 10)
-    time.sleep(5)
-    close_position('BERA-USDT-SWAP')
+    count = 0
     while count < len(trading_params_config):
         offset_ratios.append(OffsetAttribute(0,0))
         count += 1
@@ -256,42 +252,54 @@ def main():
             offset_ratio = get_offset_ratio(pair)
             offset_attribute = offset_ratios[i]
             grid_size =  float(pair.get('grid_size'))
+            order_usdt = float(pair.get('order_usdt'))
+
             if offset_attribute.offset_ratio == 0:
                 offset_attribute.offset_ratio = offset_ratio
+                offset_attribute.max_ratio = offset_ratio
+                abs_cur_ratio = abs(offset_ratio)
+                if abs_cur_ratio > grid_size:
+                    offset_grid_num = abs_cur_ratio / grid_size
+                    order_usdt = order_usdt * offset_grid_num
+                    if offset_grid_num > 0:
+                        send_feishu_notification(f"价差偏离：{offset_ratio},超过原有最高价差：{offset_attribute.max_ratio},首次开仓数量：{order_usdt}")
+                        if offset_ratio > 0:
+                            place_order(pair.get('pairA'), order_usdt, 'sell', 5)
+                            place_order(pair.get('pairB'), order_usdt, 'buy', 5)
+                        elif offset_ratio < 0:
+                            place_order(pair.get('pairA'), order_usdt, 'buy', 5)
+                            place_order(pair.get('pairB'), order_usdt, 'sell', 5)
             else:
                 if sign(offset_attribute.offset_ratio) * sign(offset_ratio) < 0:
                     # 平仓
                     close_position(pair.get('pairA'))
                     close_position(pair.get('pairB'))
+                    send_feishu_notification(f"偏离翻转,当前价差：{offset_ratio},平仓")
                 else:
                     abs_old_max_ratio = abs(offset_attribute.max_ratio)
                     abs_cur_ratio = abs(offset_ratio)
                     if abs_old_max_ratio < abs_cur_ratio:
-                        if abs_old_max_ratio % grid_size > abs_cur_ratio % grid_size:
+                        old_grid_num = abs_old_max_ratio / grid_size
+                        grid_num = abs_cur_ratio / grid_size
+                        logger.info(f"旧价差：{offset_attribute.max_ratio},偏离网格数{old_grid_num},新价差：{offset_ratio}偏离,偏离网格数{grid_num}")
+                        if old_grid_num < grid_num:
+                            logger.info(f"偏离网格数增加,开仓")
                             if offset_ratio > 0:
-                                place_order(pair.get('pairA'))
-                                place_order(pair.get('pairB'))
-
-                        offset_attribute.max_ratio = abs(offset_ratio)
+                                place_order(pair.get('pairA'),order_usdt,'sell', 5)
+                                place_order(pair.get('pairB'),order_usdt,'buy', 5)
+                            elif offset_ratio < 0:
+                                place_order(pair.get('pairA'), order_usdt, 'buy', 5)
+                                place_order(pair.get('pairB'), order_usdt, 'sell', 5)
+                            send_feishu_notification(f"价差偏离：{offset_ratio},超过原有最高价差：{offset_attribute.max_ratio}")
+                            offset_attribute.max_ratio = abs(offset_ratio)
 
                     offset_attribute.offset_ratio = offset_ratio
 
 
             cur_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            logger.info(f"{cur_time},【{pair.get('pairA')}】-【{pair.get('pairB')}】offset_ratios:{offset_ratios}")
+            logger.info(f"{cur_time},【{pair.get('pairA')}】-【{pair.get('pairB')}】offset_ratios:{offset_ratios[0].offset_ratio}")
 
         time.sleep(monitor_interval)
-
-    # while True:
-    #     # for i in range(0, len(inst_ids), batch_size):
-    #     #     batch = inst_ids[i:i + batch_size]
-    #     #     with ThreadPoolExecutor(max_workers=batch_size) as executor:
-    #     #         futures = [executor.submit(process_pair, instId, trading_pairs_config[instId]) for instId in batch]
-    #     #         for future in as_completed(futures):
-    #     #             future.result()  # Raise any exceptions caught during execution
-    #
-    #     time.sleep(monitor_interval)
-
 
 if __name__ == '__main__':
     main()
