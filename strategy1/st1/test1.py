@@ -259,7 +259,7 @@ def main():
                 offset_attribute.max_ratio = offset_ratio
                 abs_cur_ratio = abs(offset_ratio)
                 if abs_cur_ratio > grid_size:
-                    offset_grid_num = abs_cur_ratio / grid_size
+                    offset_grid_num = math.floor(abs_cur_ratio / grid_size)
                     order_usdt = order_usdt * offset_grid_num
                     if offset_grid_num > 0:
                         send_feishu_notification(f"价差偏离：{offset_ratio},超过原有最高价差：{offset_attribute.max_ratio},首次开仓数量：{order_usdt}")
@@ -279,8 +279,8 @@ def main():
                     abs_old_max_ratio = abs(offset_attribute.max_ratio)
                     abs_cur_ratio = abs(offset_ratio)
                     if abs_old_max_ratio < abs_cur_ratio:
-                        old_grid_num = abs_old_max_ratio / grid_size
-                        grid_num = abs_cur_ratio / grid_size
+                        old_grid_num = math.floor(abs_old_max_ratio / grid_size)
+                        grid_num = math.floor( abs_cur_ratio / grid_size)
                         logger.info(f"旧价差：{offset_attribute.max_ratio},偏离网格数{old_grid_num},新价差：{offset_ratio}偏离,偏离网格数{grid_num}")
                         if old_grid_num < grid_num:
                             logger.info(f"偏离网格数增加,开仓")
