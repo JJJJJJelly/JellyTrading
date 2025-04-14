@@ -42,8 +42,8 @@ def plot_klines(symbol1,symbol2):
     plt.show()
 
 if __name__ == '__main__':
-    symbol1 = 'PEOPLE/USDT:USDT'
-    symbol2 = 'YGG/USDT:USDT'
+    symbol1 = 'APE/USDT:USDT'
+    symbol2 = 'BICO/USDT:USDT'
     start_date = '2024-04-01'
     end_date = '2024-07-01'
     plot_klines(symbol1,symbol2)

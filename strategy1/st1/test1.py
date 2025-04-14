@@ -1,3 +1,4 @@
+import math
 import time
 import json
 import logging
@@ -45,6 +46,7 @@ logger.addHandler(console_handler)
 instrument_info_dict = {}
 offset_ratios = []
 
+
 def fetch_and_store_all_instruments(inst_type='SWAP'):
     try:
         logger.info(f"Fetching all instruments for type: {inst_type}")
@@ -61,6 +63,7 @@ def fetch_and_store_all_instruments(inst_type='SWAP'):
         logger.error(f"Error fetching instruments: {e}")
         raise
 
+
 def send_feishu_notification(message):
     if feishu_webhook:
         headers = {'Content-Type': 'application/json'}
@@ -71,12 +74,14 @@ def send_feishu_notification(message):
         else:
             logger.error(f"飞书通知发送失败: {response.text}")
 
+
 def get_historical_klines(inst_id, bar='1H', limit=1000):
     response = market_api.get_candlesticks(inst_id, bar=bar, limit=limit)
     if 'data' in response and len(response['data']) > 0:
         return response['data']
     else:
         raise ValueError("Unexpected response structure or missing candlestick data")
+
 
 def get_current_price(inst_id, bar='1m', limit=100):
     response = market_api.get_candlesticks(inst_id, bar=bar, limit=limit)
@@ -86,6 +91,16 @@ def get_current_price(inst_id, bar='1m', limit=100):
     else:
         raise ValueError("Unexpected response structure or missing candlestick data")
 
+
+def get_mark_price(instId):
+    response = market_api.get_ticker(instId)
+    if 'data' in response and len(response['data']) > 0:
+        last_price = response['data'][0]['last']
+        return float(last_price)
+    else:
+        raise ValueError("Unexpected response structure or missing 'last' key")
+
+
 def round_price_to_tick(price, tick_size):
     # 计算 tick_size 的小数位数
     tick_decimals = len(f"{tick_size:.10f}".rstrip('0').split('.')[1]) if '.' in f"{tick_size:.10f}" else 0
@@ -94,15 +109,12 @@ def round_price_to_tick(price, tick_size):
     adjusted_price = round(price / tick_size) * tick_size
     return f"{adjusted_price:.{tick_decimals}f}"
 
+
+# posSide 在开平仓模式且保证金模式为逐仓条件下必填(单向持仓时，传posSide似乎会报错)
 def set_leverage(instId, leverage, mgnMode='isolated', posSide=None):
     try:
-        body = {
-            "instId": instId,
-            "lever": str(leverage),
-            "mgnMode": mgnMode
-        }
-        if mgnMode == 'isolated' and posSide:
-            body["posSide"] = posSide
+        body = {"instId": instId, "lever": str(leverage), "mgnMode": mgnMode}
+        # if mgnMode == 'isolated' and posSide:
         response = account_api.set_leverage(**body)
         if response['code'] == '0':
             logger.info(f"Leverage set to {leverage}x for {instId} with mgnMode: {mgnMode}")
@@ -112,26 +124,35 @@ def set_leverage(instId, leverage, mgnMode='isolated', posSide=None):
         logger.error(f"Error setting leverage: {e}")
 
 
-def place_order(instId, price, amount_usdt, side,leverage_value):
+# 开仓接口
+def place_order(instId, price, amount_usdt, side, leverage_value):
     if instId not in instrument_info_dict:
         logger.error(f"Instrument {instId} not found in instrument info dictionary")
         return
     tick_size = float(instrument_info_dict[instId]['tickSz'])
     adjusted_price = round_price_to_tick(price, tick_size)
 
-    response = public_api.get_convert_contract_coin(type='1', instId=instId, sz=str(amount_usdt), px=str(adjusted_price), unit='usdt', opType='open')
+    new_amount_usdt = amount_usdt * leverage_value * leverage_value
+    logger.info(f"tick_size: {tick_size}, adjusted_price: {adjusted_price}, new_amount_usdt: {new_amount_usdt}")
+    # 币转张（返回值为张数）
+    # 我猜测是因为开单方法只能通过传入张数来开单，不能直接痛过usdt数量来开单
+    response = public_api.get_convert_contract_coin(type='1', instId=instId, sz=str(new_amount_usdt),
+                                                    px=str(adjusted_price), unit='usdt')
     if response['code'] == '0':
         sz = response['data'][0]['sz']
+        logger.info(f"response['data']: {response['data']}")
         if float(sz) > 0:
 
             pos_side = 'long' if side == 'buy' else 'short'
+            logger.info(f"pos_side: {pos_side}")
             set_leverage(instId, leverage_value, mgnMode='isolated', posSide=pos_side)
             order_result = trade_api.place_order(
                 instId=instId,
                 tdMode='isolated',
-                posSide=pos_side,
+                # posSide=pos_side,
                 side=side,
-                ordType='limit',
+                # market市价单，limit限价单
+                ordType='market',
                 sz=sz,
                 px=str(adjusted_price)
             )
@@ -141,6 +162,18 @@ def place_order(instId, price, amount_usdt, side,leverage_value):
     else:
         logger.info(f"{instId}转换失败: {response['msg']}")
         send_feishu_notification(f"{instId}转换失败: {response['msg']}")
+
+
+# 平仓接口
+def close_position(inst_id):
+    try:
+        trade_api.close_positions(instId=inst_id, mgnMode="isolated")
+        logger.info(f"Closed position for {inst_id}")
+    except Exception as e:
+        logger.error(f"Error closing position for {inst_id}: {e}")
+        return False
+    return 0
+
 
 def get_avg_ratio(pairs):
     k_lines_a = get_historical_klines(pairs.get('pairA'))
@@ -167,6 +200,7 @@ def get_avg_ratio(pairs):
     logger.info(f"平均比价:{avg_ratio}")
     return avg_ratio
 
+
 def get_current_ratio(pairs):
     price_a = float(get_current_price(pairs.get('pairA')))
     price_b = float(get_current_price(pairs.get('pairB')))
@@ -174,12 +208,14 @@ def get_current_ratio(pairs):
     logger.info(f"当前比价:{current_ratio}")
     return current_ratio
 
+
 def get_offset_ratio(pairs):
     avg_ratio = get_avg_ratio(pairs)
     current_ratio = get_current_ratio(pairs)
     offset_ratio = (current_ratio - avg_ratio) / avg_ratio
     logger.info(f"偏离均价:{offset_ratio}")
     return offset_ratio
+
 
 def sign(x):
     if x > 0:
@@ -189,35 +225,38 @@ def sign(x):
     else:
         return 0
 
-def close_position():
-    return 0
 
 def main():
     count = 0
-    while count < len(trading_params_config):
-        offset_ratios.append(0)
-        count += 1
+    fetch_and_store_all_instruments()
 
-    while True:
-        for i in range(0, len(trading_params_config)):
-            pair = trading_params_config[i]
-            offset_ratio = get_offset_ratio(pair)
-
-            if offset_ratios[i] == 0:
-                offset_ratios[i] = offset_ratio
-            else:
-                if sign(offset_ratios[i]) * sign(offset_ratio) < 0:
-                    # 平仓
-                    close_position()
-                    close_position()
-                else:
-                    offset_ratios[i] = offset_ratio
-            cur_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            logger.info(f"{cur_time},【{pair.get('pairA')}】-【{pair.get('pairB')}】offset_ratios:{offset_ratios}")
-
-        time.sleep(monitor_interval)
-
-
+    # set_leverage('BERA-USDT-SWAP',20,posSide='long')
+    current_price = float(get_current_price('BERA-USDT-SWAP'))
+    place_order('BERA-USDT-SWAP', current_price, 1, 'buy', 10)
+    time.sleep(5)
+    close_position('BERA-USDT-SWAP')
+    # while count < len(trading_params_config):
+    #     offset_ratios.append(0)
+    #     count += 1
+    #
+    # while True:
+    #     for i in range(0, len(trading_params_config)):
+    #         pair = trading_params_config[i]
+    #         offset_ratio = get_offset_ratio(pair)
+    #
+    #         if offset_ratios[i] == 0:
+    #             offset_ratios[i] = offset_ratio
+    #         else:
+    #             if sign(offset_ratios[i]) * sign(offset_ratio) < 0:
+    #                 # 平仓
+    #                 close_position()
+    #                 close_position()
+    #             else:
+    #                 offset_ratios[i] = offset_ratio
+    #         cur_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #         logger.info(f"{cur_time},【{pair.get('pairA')}】-【{pair.get('pairB')}】offset_ratios:{offset_ratios}")
+    #
+    #     time.sleep(monitor_interval)
 
     while True:
         # for i in range(0, len(inst_ids), batch_size):
@@ -228,6 +267,7 @@ def main():
         #             future.result()  # Raise any exceptions caught during execution
 
         time.sleep(monitor_interval)
+
 
 if __name__ == '__main__':
     main()
