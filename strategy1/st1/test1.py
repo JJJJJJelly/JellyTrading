@@ -13,6 +13,7 @@ from datetime import datetime
 import requests
 from typing import List
 
+
 class OffsetAttribute:
     def __init__(self, offset_ratio, max_ratio):
         self.offset_ratio = offset_ratio
@@ -20,7 +21,6 @@ class OffsetAttribute:
 
     def description(self):
         return f"{self.offset_ratio} {self.max_ratio}"
-
 
 
 # 读取配置文件
@@ -144,7 +144,7 @@ def place_order(instId, amount_usdt, side, leverage_value):
     price = float(get_current_price(instId))
     adjusted_price = round_price_to_tick(price, tick_size)
 
-    new_amount_usdt = amount_usdt * leverage_value * leverage_value
+    new_amount_usdt = amount_usdt * leverage_value
     logger.info(f"tick_size: {tick_size}, adjusted_price: {adjusted_price}, new_amount_usdt: {new_amount_usdt}")
     # 币转张（返回值为张数）
     # 我猜测是因为开单方法只能通过传入张数来开单，不能直接痛过usdt数量来开单
@@ -188,6 +188,7 @@ def close_position(inst_id):
     return 0
 
 
+# 获取平均比价
 def get_avg_ratio(pairs):
     k_lines_a = get_historical_klines(pairs.get('pairA'))
     k_lines_b = get_historical_klines(pairs.get('pairB'))
@@ -214,6 +215,7 @@ def get_avg_ratio(pairs):
     return avg_ratio
 
 
+# 获取当前比价
 def get_current_ratio(pairs):
     price_a = float(get_current_price(pairs.get('pairA')))
     price_b = float(get_current_price(pairs.get('pairB')))
@@ -222,6 +224,7 @@ def get_current_ratio(pairs):
     return current_ratio
 
 
+# 获取偏离均价
 def get_offset_ratio(pairs):
     avg_ratio = get_avg_ratio(pairs)
     current_ratio = get_current_ratio(pairs)
@@ -243,7 +246,7 @@ def main():
     fetch_and_store_all_instruments()
     count = 0
     while count < len(trading_params_config):
-        offset_ratios.append(OffsetAttribute(0,0))
+        offset_ratios.append(OffsetAttribute(0, 0))
         count += 1
 
     while True:
@@ -251,7 +254,7 @@ def main():
             pair = trading_params_config[i]
             offset_ratio = get_offset_ratio(pair)
             offset_attribute = offset_ratios[i]
-            grid_size =  float(pair.get('grid_size'))
+            grid_size = float(pair.get('grid_size'))
             order_usdt = float(pair.get('order_usdt'))
 
             if offset_attribute.offset_ratio == 0:
@@ -262,7 +265,8 @@ def main():
                     offset_grid_num = math.floor(abs_cur_ratio / grid_size)
                     order_usdt = order_usdt * offset_grid_num
                     if offset_grid_num > 0:
-                        send_feishu_notification(f"价差偏离：{offset_ratio},超过原有最高价差：{offset_attribute.max_ratio},首次开仓数量：{order_usdt}")
+                        send_feishu_notification(
+                            f"价差偏离：{offset_ratio},超过原有最高价差：{offset_attribute.max_ratio},首次开仓数量：{order_usdt}")
                         if offset_ratio > 0:
                             place_order(pair.get('pairA'), order_usdt, 'sell', 5)
                             place_order(pair.get('pairB'), order_usdt, 'buy', 5)
@@ -270,36 +274,40 @@ def main():
                             place_order(pair.get('pairA'), order_usdt, 'buy', 5)
                             place_order(pair.get('pairB'), order_usdt, 'sell', 5)
             else:
-                if sign(offset_attribute.offset_ratio) * sign(offset_ratio) < 0:
+                abs_old_max_ratio = abs(offset_attribute.max_ratio)
+                abs_cur_ratio = abs(offset_ratio)
+                old_grid_num = math.floor(abs_old_max_ratio / grid_size)
+                grid_num = math.floor(abs_cur_ratio / grid_size)
+                if sign(offset_attribute.offset_ratio) * sign(offset_ratio) < 0 < grid_num:
                     # 平仓
                     close_position(pair.get('pairA'))
                     close_position(pair.get('pairB'))
                     send_feishu_notification(f"偏离翻转,当前价差：{offset_ratio},平仓")
+                    offset_attribute.max_ratio = offset_ratio
                 else:
-                    abs_old_max_ratio = abs(offset_attribute.max_ratio)
-                    abs_cur_ratio = abs(offset_ratio)
                     if abs_old_max_ratio < abs_cur_ratio:
-                        old_grid_num = math.floor(abs_old_max_ratio / grid_size)
-                        grid_num = math.floor( abs_cur_ratio / grid_size)
-                        logger.info(f"旧价差：{offset_attribute.max_ratio},偏离网格数{old_grid_num},新价差：{offset_ratio}偏离,偏离网格数{grid_num}")
+                        logger.info(
+                            f"旧价差：{offset_attribute.max_ratio},偏离网格数{old_grid_num},新价差：{offset_ratio}偏离,偏离网格数{grid_num}")
                         if old_grid_num < grid_num:
                             logger.info(f"偏离网格数增加,开仓")
                             if offset_ratio > 0:
-                                place_order(pair.get('pairA'),order_usdt,'sell', 5)
-                                place_order(pair.get('pairB'),order_usdt,'buy', 5)
+                                place_order(pair.get('pairA'), order_usdt, 'sell', 5)
+                                place_order(pair.get('pairB'), order_usdt, 'buy', 5)
                             elif offset_ratio < 0:
                                 place_order(pair.get('pairA'), order_usdt, 'buy', 5)
                                 place_order(pair.get('pairB'), order_usdt, 'sell', 5)
-                            send_feishu_notification(f"价差偏离：{offset_ratio},超过原有最高价差：{offset_attribute.max_ratio}")
+                            send_feishu_notification(
+                                f"价差偏离：{offset_ratio},超过原有最高价差：{offset_attribute.max_ratio}")
                             offset_attribute.max_ratio = abs(offset_ratio)
 
-                    offset_attribute.offset_ratio = offset_ratio
-
+                offset_attribute.offset_ratio = offset_ratio
 
             cur_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            logger.info(f"{cur_time},【{pair.get('pairA')}】-【{pair.get('pairB')}】offset_ratios:{offset_ratios[0].offset_ratio}")
+            logger.info(
+                f"{cur_time},【{pair.get('pairA')}】-【{pair.get('pairB')}】offset_ratios:{offset_ratios[i].offset_ratio}")
 
         time.sleep(monitor_interval)
+
 
 if __name__ == '__main__':
     main()

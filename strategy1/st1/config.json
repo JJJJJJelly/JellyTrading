@@ -25,6 +25,13 @@
       "grid_size": 0.01,
       "order_usdt": 5,
       "leverage_multiple": 5
+    },
+    {
+      "pairA": "APE-USDT-SWAP",
+      "pairB": "BICO-USDT-SWAP",
+      "grid_size": 0.01,
+      "order_usdt": 5,
+      "leverage_multiple": 5
     }
   ]
 }
