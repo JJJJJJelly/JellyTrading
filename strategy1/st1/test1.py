@@ -278,7 +278,7 @@ def main():
                 abs_cur_ratio = abs(offset_ratio)
                 old_grid_num = math.floor(abs_old_max_ratio / grid_size)
                 grid_num = math.floor(abs_cur_ratio / grid_size)
-                if sign(offset_attribute.offset_ratio) * sign(offset_ratio) < 0 < grid_num:
+                if sign(offset_attribute.offset_ratio) * sign(offset_ratio) < 0 < old_grid_num:
                     # 平仓
                     close_position(pair.get('pairA'))
                     close_position(pair.get('pairB'))
