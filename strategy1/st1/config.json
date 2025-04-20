@@ -8,6 +8,7 @@
   "bitget": {
   },
   "feishu_webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/5470932a-ae72-430e-9337-de41f6280719",
+  "feishu_common_webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/355eb852-4965-41f3-a51c-c9721c480270",
   "monitor_interval": 60,
   "leverage": 10,
   "tradingPairs": {
@@ -20,17 +21,10 @@
   },
   "tradingParams": [
     {
-      "pairA": "GALA-USDT-SWAP",
-      "pairB": "SUSHI-USDT-SWAP",
-      "grid_size": 0.01,
-      "order_usdt": 5,
-      "leverage_multiple": 5
-    },
-    {
       "pairA": "APE-USDT-SWAP",
       "pairB": "BICO-USDT-SWAP",
       "grid_size": 0.01,
-      "order_usdt": 5,
+      "order_usdt": 40,
       "leverage_multiple": 5
     }
   ]

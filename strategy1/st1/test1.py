@@ -33,6 +33,7 @@ trading_pairs_config = config.get('tradingPairs', {})
 trading_params_config = config.get('tradingParams', {})
 monitor_interval = config.get('monitor_interval', 60)  # 默认60秒
 feishu_webhook = config.get('feishu_webhook', '')
+feishu_common_webhook = config.get('feishu_common_webhook', '')
 # leverage_value = config.get('leverage', 10)
 
 trade_api = TradeAPI.TradeAPI(okx_config["apiKey"], okx_config["secret"], okx_config["password"], False, '0')
@@ -75,11 +76,11 @@ def fetch_and_store_all_instruments(inst_type='SWAP'):
         raise
 
 
-def send_feishu_notification(message):
+def send_feishu_notification(message,is_common = 0):
     if feishu_webhook:
         headers = {'Content-Type': 'application/json'}
         data = {"msg_type": "text", "content": {"text": message}}
-        response = requests.post(feishu_webhook, headers=headers, json=data)
+        response = requests.post(feishu_webhook if is_common == 0 else feishu_common_webhook, headers=headers, json=data)
         if response.status_code == 200:
             logger.info("飞书通知发送成功")
         else:
@@ -241,71 +242,93 @@ def sign(x):
     else:
         return 0
 
+def deal_pair(index):
+    pair = trading_params_config[index]
+    try:
+        offset_ratio = get_offset_ratio(pair)
+        offset_attribute = offset_ratios[index]
+        grid_size = float(pair.get('grid_size'))
+        order_usdt = float(pair.get('order_usdt'))
 
-def main():
-    fetch_and_store_all_instruments()
-    count = 0
-    while count < len(trading_params_config):
-        offset_ratios.append(OffsetAttribute(0, 0))
-        count += 1
-
-    while True:
-        for i in range(0, len(trading_params_config)):
-            pair = trading_params_config[i]
-            offset_ratio = get_offset_ratio(pair)
-            offset_attribute = offset_ratios[i]
-            grid_size = float(pair.get('grid_size'))
-            order_usdt = float(pair.get('order_usdt'))
-
-            if offset_attribute.offset_ratio == 0:
-                offset_attribute.offset_ratio = offset_ratio
+        if offset_attribute.offset_ratio == 0:
+            offset_attribute.offset_ratio = offset_ratio
+            offset_attribute.max_ratio = offset_ratio
+            abs_cur_ratio = abs(offset_ratio)
+            if abs_cur_ratio > grid_size:
+                offset_grid_num = math.floor(abs_cur_ratio / grid_size)
+                order_usdt = order_usdt * offset_grid_num
+                if offset_grid_num > 0:
+                    send_feishu_notification(
+                        f"价差偏离：{offset_ratio},超过原有最高价差：{offset_attribute.max_ratio},首次开仓数量：{order_usdt}")
+                    if offset_ratio > 0:
+                        place_order(pair.get('pairA'), order_usdt, 'sell', 5)
+                        place_order(pair.get('pairB'), order_usdt, 'buy', 5)
+                    elif offset_ratio < 0:
+                        place_order(pair.get('pairA'), order_usdt, 'buy', 5)
+                        place_order(pair.get('pairB'), order_usdt, 'sell', 5)
+        else:
+            abs_old_max_ratio = abs(offset_attribute.max_ratio)
+            abs_cur_ratio = abs(offset_ratio)
+            old_grid_num = math.floor(abs_old_max_ratio / grid_size)
+            grid_num = math.floor(abs_cur_ratio / grid_size)
+            # 当前最大偏离格数每偏离5，平仓的格数偏离1 eg:最大偏离度9,9/4*0.5 = 1,也就是网格为1.多的时候平仓
+            adjust_close_grid = (float(old_grid_num) / 4) * 0.5
+            adjust_log = f"当前偏离网格数{abs_cur_ratio / grid_size},调整后的平仓网格数{adjust_close_grid}"
+            send_feishu_notification(adjust_log, 1)
+            if sign(offset_attribute.offset_ratio) * sign(offset_ratio) < 0 < old_grid_num :
+                # 平仓
+                close_position(pair.get('pairA'))
+                close_position(pair.get('pairB'))
+                send_feishu_notification(f"偏离翻转,当前价差：{offset_ratio},平仓")
                 offset_attribute.max_ratio = offset_ratio
-                abs_cur_ratio = abs(offset_ratio)
-                if abs_cur_ratio > grid_size:
-                    offset_grid_num = math.floor(abs_cur_ratio / grid_size)
-                    order_usdt = order_usdt * offset_grid_num
-                    if offset_grid_num > 0:
-                        send_feishu_notification(
-                            f"价差偏离：{offset_ratio},超过原有最高价差：{offset_attribute.max_ratio},首次开仓数量：{order_usdt}")
+            elif (abs_cur_ratio / grid_size) < adjust_close_grid:
+                # 平仓
+                close_position(pair.get('pairA'))
+                close_position(pair.get('pairB'))
+                send_feishu_notification(f"当前偏离网格数{abs_cur_ratio / grid_size}小于调整后的平仓网格数{adjust_close_grid},平仓")
+                offset_attribute.max_ratio = 0
+            else:
+                if abs_old_max_ratio < abs_cur_ratio:
+                    logger.info(
+                        f"旧价差：{offset_attribute.max_ratio},偏离网格数{old_grid_num},新价差：{offset_ratio}偏离,偏离网格数{grid_num}")
+                    if old_grid_num < grid_num:
+                        logger.info(f"偏离网格数增加,开仓")
                         if offset_ratio > 0:
                             place_order(pair.get('pairA'), order_usdt, 'sell', 5)
                             place_order(pair.get('pairB'), order_usdt, 'buy', 5)
                         elif offset_ratio < 0:
                             place_order(pair.get('pairA'), order_usdt, 'buy', 5)
                             place_order(pair.get('pairB'), order_usdt, 'sell', 5)
-            else:
-                abs_old_max_ratio = abs(offset_attribute.max_ratio)
-                abs_cur_ratio = abs(offset_ratio)
-                old_grid_num = math.floor(abs_old_max_ratio / grid_size)
-                grid_num = math.floor(abs_cur_ratio / grid_size)
-                if sign(offset_attribute.offset_ratio) * sign(offset_ratio) < 0 < old_grid_num:
-                    # 平仓
-                    close_position(pair.get('pairA'))
-                    close_position(pair.get('pairB'))
-                    send_feishu_notification(f"偏离翻转,当前价差：{offset_ratio},平仓")
-                    offset_attribute.max_ratio = offset_ratio
-                else:
-                    if abs_old_max_ratio < abs_cur_ratio:
-                        logger.info(
-                            f"旧价差：{offset_attribute.max_ratio},偏离网格数{old_grid_num},新价差：{offset_ratio}偏离,偏离网格数{grid_num}")
-                        if old_grid_num < grid_num:
-                            logger.info(f"偏离网格数增加,开仓")
-                            if offset_ratio > 0:
-                                place_order(pair.get('pairA'), order_usdt, 'sell', 5)
-                                place_order(pair.get('pairB'), order_usdt, 'buy', 5)
-                            elif offset_ratio < 0:
-                                place_order(pair.get('pairA'), order_usdt, 'buy', 5)
-                                place_order(pair.get('pairB'), order_usdt, 'sell', 5)
-                            send_feishu_notification(
-                                f"价差偏离：{offset_ratio},超过原有最高价差：{offset_attribute.max_ratio}")
-                            offset_attribute.max_ratio = abs(offset_ratio)
+                        send_feishu_notification(
+                            f"价差偏离：{offset_ratio},超过原有最高价差：{offset_attribute.max_ratio}")
+                        offset_attribute.max_ratio = abs(offset_ratio)
 
-                offset_attribute.offset_ratio = offset_ratio
+            offset_attribute.offset_ratio = offset_ratio
 
-            cur_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            logger.info(
-                f"{cur_time},【{pair.get('pairA')}】-【{pair.get('pairB')}】offset_ratios:{offset_ratios[i].offset_ratio}")
+        cur_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        common_log = f"{cur_time},【{pair.get('pairA')}】-【{pair.get('pairB')}】offset_ratios:{offset_ratios[index].offset_ratio}"
+        logger.info(common_log)
+        send_feishu_notification(common_log,1)
+    except Exception as e:
+        error_message = f"处理交易对:【{pair.get('pairA')}】-【{pair.get('pairB')}】时报错: {e}"
+        logger.error(error_message)
+        send_feishu_notification(error_message)
 
+def main():
+    try:
+        fetch_and_store_all_instruments()
+        count = 0
+        while count < len(trading_params_config):
+            offset_ratios.append(OffsetAttribute(0, 0))
+            count += 1
+    except Exception as e:
+        error_message = f"获取所有品种时报错:{e}"
+        logger.error(error_message)
+        send_feishu_notification(error_message)
+
+    while True:
+        for i in range(0, len(trading_params_config)):
+            deal_pair(i)
         time.sleep(monitor_interval)
 
 
