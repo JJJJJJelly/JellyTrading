@@ -285,7 +285,7 @@ def deal_pair(index):
                 # 平仓
                 close_position(pair.get('pairA'))
                 close_position(pair.get('pairB'))
-                send_feishu_notification(f"当前偏离网格数{abs_cur_ratio / grid_size}小于调整后的平仓网格数{adjust_close_grid},平仓",1)
+                send_feishu_notification(f"当前偏离网格数{abs_cur_ratio / grid_size}小于调整后的平仓网格数{adjust_close_grid},平仓")
                 offset_attribute.max_ratio = 0
             else:
                 if abs_old_max_ratio < abs_cur_ratio:
